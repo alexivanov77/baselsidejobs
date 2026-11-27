@@ -1,0 +1,98 @@
+# Local Job Board — 1-Week Project Plan & Tech Stack
+
+## 1. Project Overview & Goals
+Build and deploy a live, automated **local job board** within **7 days** as a student team project. A Python web scraper periodically collects local job listings, extracts key metadata and skills, and stores them in a cloud database. A hosted web frontend displays searchable, filterable job listings alongside a lightweight local market insights view.
+
+### Internship Alignment (e.g., Adobe 2027 SWE Intern – R173015)
+To make the project stand out on a resume and in technical interviews, the architecture intentionally incorporates:
+* **Backend & OOP:** Modular Python scraper using an abstract `BaseScraper` interface, Pydantic validation, and PostgreSQL upserts.
+* **Frontend & Web Fundamentals:** Modern Next.js + TypeScript UI demonstrating HTTP, DOM, responsive design, and API integration.
+* **Cloud & CI/CD:** Fully automated serverless pipeline (Supabase, GitHub Actions, Vercel).
+* **Data Insights:** Automated skill/keyword extraction powering a simple "Local Market Insights" chart.
+
+---
+
+## 2. Tech Stack (Zero-Cost Serverless)
+
+| Layer | Technology | Role | Why It Fits a 1-Week Timeline |
+| :--- | :--- | :--- | :--- |
+| **Database** | **Supabase** (PostgreSQL) | Stores jobs, extracted skills, and timestamps; provides an auto-generated REST API. | 500 MB free DB + unlimited API requests. Daily scraper runs prevent free-tier inactivity pausing. |
+| **Scraper & ETL** | **Python 3.12+** (`httpx`, `BeautifulSoup4`, `Playwright`, `pydantic`, `supabase-py`) | Fetches career pages/APIs, parses listings via OOP adapters, tags skills, and upserts to DB. | `httpx` + `BeautifulSoup4` for fast static/JSON scraping; `Playwright` for JS-heavy portals. |
+| **Automation (CI/CD)** | **GitHub Actions** | Runs the scraper on a 12-hour cron schedule and executes `pytest` unit tests on PRs. | Free on public repos (2,000 min/month on private); eliminates always-on cron servers. |
+| **Frontend** | **Next.js (App Router) + TypeScript + Tailwind CSS + Recharts** | Searchable/filterable job feed and an `/insights` chart page for top local skills. | Fast UI development, strong type safety, and quick data visualization. |
+| **Hosting** | **Vercel (Hobby Plan)** | Auto-deploys the frontend on every push to `main` with PR preview URLs. | Free for student/non-commercial projects with zero server setup. |
+
+### Why Serverless & a Managed Database?
+* **No Server Administration:** Skips renting a VPS, configuring Nginx/firewalls, managing SSL certificates, and handling OS updates—saving 2–3 days of setup.
+* **Why Not a Local Database?** A local SQLite or PostgreSQL database on a laptop goes offline when the machine sleeps, cannot be reached across firewalls by Vercel or GitHub Actions, gets wiped on ephemeral serverless containers, and fails to provide a shared source of truth for a team. Supabase solves this by hosting standard PostgreSQL 24/7 with built-in REST endpoints and Row Level Security (RLS).
+
+---
+
+## 3. Repository Structure & Database Schema
+
+### Monorepo Layout
+```text
+local-job-board/
+├── .github/workflows/
+│   └── scrape.yml            # 12-hour scheduled cronjob + manual trigger
+├── scraper/
+│   ├── models.py             # Pydantic JobListing schema
+│   ├── base_scraper.py       # Abstract BaseScraper class (OOP)
+│   ├── sources/
+│   │   ├── ba_api.py         # Bundesagentur für Arbeit JSON API adapter
+│   │   └── local_company.py  # Scrapers for 2–4 local employer career pages
+│   ├── analyzer.py           # Skill extraction & category classification
+│   ├── db.py                 # Supabase upsert logic (ON CONFLICT url)
+│   ├── main.py               # Orchestrator with logging & error isolation
+│   └── tests/                # Pytest unit tests with saved HTML fixtures
+└── web/                      # Next.js + Tailwind + Recharts frontend
+    ├── app/
+    │   ├── page.tsx          # Active job feed with search & filters
+    │   └── insights/page.tsx # Aggregated skill/company charts
+    └── lib/supabase.ts       # Read-only Supabase client
+```
+
+### PostgreSQL Schema (`jobs` Table)
+```sql
+CREATE TABLE jobs (
+  id BIGSERIAL PRIMARY KEY,
+  title TEXT NOT NULL,
+  company TEXT NOT NULL,
+  location TEXT NOT NULL,
+  job_type TEXT,                     -- e.g., Werkstudent, Intern, Full-time
+  category TEXT,                     -- Auto-tagged: Backend, Frontend, Data, etc.
+  skills TEXT[] DEFAULT '{}',        -- Extracted keywords for filtering & charts
+  url TEXT UNIQUE NOT NULL,          -- Deduplication key for upserts
+  source TEXT NOT NULL,              -- Source identifier for debugging
+  posted_at DATE,
+  last_seen_at TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_jobs_last_seen ON jobs (last_seen_at DESC);
+```
+
+* **Security (RLS):** Enable Row Level Security in Supabase—allow public read-only (`SELECT`) access for the frontend anon key, and restrict writes (`INSERT`/`UPDATE`) to the `service_role` key stored in GitHub Actions Secrets.
+* **Freshness:** Update `last_seen_at` on every upsert and display only jobs seen within the last 7 days so expired postings disappear automatically.
+
+---
+
+## 4. 7-Day Execution Plan
+
+| Day | Milestone | Key Tasks | Definition of Done |
+| :--- | :--- | :--- | :--- |
+| **Day 1** | **Setup & Source Discovery** | Init monorepo, create Supabase project + `jobs` table + RLS, deploy starter Next.js app to Vercel. Select **3–5 local sources** and inspect `robots.txt` & DevTools Network tabs. | Empty app live on Vercel; DB ready; target endpoints/HTML structures confirmed. |
+| **Day 2** | **Core OOP Scraper** | Build `models.py`, `base_scraper.py`, `db.py` (upsert), and the first 2 scrapers (e.g., BA API + 1 local employer). | Running `main.py` populates 50+ deduplicated local jobs into Supabase. |
+| **Day 3** | **Expand Sources & Analytics** | Add 1–2 more local career pages. Build `analyzer.py` for skill extraction and job categorization. Add `pytest` unit tests on saved HTML fixtures. | 3+ sources run cleanly with error isolation; `skills` and `category` fields populated. |
+| **Day 4** | **Frontend Job Feed** | Connect Next.js to Supabase (read-only). Build responsive job cards, search bar, and filters (`job_type`, `category`, `location`). | Users can search/filter live active jobs and click through to original postings. |
+| **Day 5** | **Insights & Automation** | Build `/insights` page with Recharts (top skills, jobs by type/company). Set up `.github/workflows/scrape.yml` with GitHub Secrets. | GitHub Action runs cleanly on schedule; charts render live DB aggregations. |
+| **Day 6** | **Hardening & Polish** | Handle missing fields/empty states, enforce rate-limiting (`1–2s` delays + clear `User-Agent`), add pagination/"Load More", fix mobile layout bugs. | Zero console errors; repeat scraper runs create zero duplicates. |
+| **Day 7** | **Docs & Demo Prep** | Write `README.md` with a Mermaid architecture diagram, setup steps, ethical scraping notes, and design trade-offs. Record a short demo clip. | Live app works end-to-end; repo is clean and presentation/recruiter-ready. |
+
+---
+
+## 5. Key Guardrails & Best Practices
+* **Avoid Anti-Bot Mega-Boards:** Skip LinkedIn, Indeed, and StepStone (heavy Cloudflare/CAPTCHA blocks). Target direct local employer career pages and official APIs (like the Bundesagentur für Arbeit Jobsuche API).
+* **Check for JSON First:** Inspect **DevTools → Network → Fetch/XHR** before reaching for Playwright—fetching underlying JSON endpoints with `httpx` is faster and less brittle.
+* **Ethical & Legal Scraping:** Respect `robots.txt`, throttle requests (`1–2s` delay), store **metadata only** (never copy full job descriptions), and always link directly to the original employer listing.
+* **Freeze Scope on Day 5:** Skip user accounts, authentication, and email alerts for v1 to guarantee a polished, reliable launch.
